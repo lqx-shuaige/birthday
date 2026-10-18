@@ -222,7 +222,7 @@
   }
   .photo.show:nth-child(2n) { animation-duration: 7.2s; animation-delay: -1.8s; }
   .photo.show:nth-child(3n) { animation-duration: 5.4s; animation-delay: -3.1s; }
-  @keyframes photoFloat { from { margin-top: 0; } to { margin-top: -8px; } }
+  @keyframes photoFloat { from { translate: 0 0; } to { translate: 0 -8px; } }
   .photo.dragging {
     animation: none; cursor: grabbing;
     box-shadow: 0 34px 80px rgba(0, 0, 0, .62), 0 10px 24px rgba(0, 0, 0, .35);
@@ -245,6 +245,13 @@
     margin: 0 8px;
   }
 
+  @media (max-width: 520px) {
+    #hint {
+      font-size: 12px; letter-spacing: .22em; text-indent: .22em;
+      color: rgba(244, 236, 223, .46);
+    }
+    body[data-stage="5"] #hint { color: rgba(247, 238, 224, .60); }
+  }
   @media (max-height: 720px) {
     #overlay { padding-top: 4.5vh; }
     .title { font-size: clamp(25px, 6.6vw, 36px); }
@@ -1899,12 +1906,56 @@ const HINTS = {
 
 const WALL_SLOTS = [
   [0.29, 0.285, -6], [0.70, 0.345, 5], [0.27, 0.535, 4],
-  [0.635, 0.78, -4], [0.44, 0.775, 2], [0.66, 0.225, -3]
+  [0.62, 0.78, -4], [0.44, 0.775, 2], [0.66, 0.225, -3]
 ];
 const WIDE_SLOTS = [
   [0.25, 0.50, -5], [0.50, 0.60, 3], [0.75, 0.48, -3],
   [0.40, 0.40, 4], [0.62, 0.32, -4], [0.50, 0.80, 2]
 ];
+
+/* 窄屏照片墙：两行错落，配文互不遮挡。
+   横图垫在自拍下面，四句配文都能读，脸也不会被挡。 */
+const MOBILE_ROT = [-6, 5, 3, -4];
+const mobileWall = [];
+function layoutMobileWall() {
+  const gap = 12;
+  const placed = [];
+  for (let i = 0; i < mobileWall.length; i++) {
+    const entry = mobileWall[i];
+    if (!entry) continue;
+    const cardW = entry.rw + 20, cardH = entry.rh + 47;
+    let left, top;
+    if (i === 0) {
+      left = 16 + cardW / 2;
+      top = H * .15;
+    } else if (i === 1) {
+      left = W - 16 - cardW / 2;
+      top = H * .15 + 18;
+    } else if (i === 2) {
+      left = W - 18 - cardW / 2;
+      top = Math.max(placed[1] ? placed[1].capBottom + gap : H * .46, H * .47 - cardH / 2);
+    } else {
+      left = 12 + cardW / 2;
+      top = Math.max(
+        placed[0] ? placed[0].capBottom + gap : H * .46,
+        placed[2] ? placed[2].top + placed[2].cardH + 34 - cardH : H * .5,
+        H * .80 - cardH / 2
+      );
+    }
+    top = Math.min(top, H - 12 - cardH - (i === 3 ? 2 : 0));
+    placed[i] = { top, left, cardW, cardH, capBottom: top + cardH - 10 };
+    entry.el.style.left = left + 'px';
+    entry.el.style.top = (top + cardH / 2) + 'px';   // .photo 以中心定位
+    entry.el.style.zIndex = String(i === 3 ? wallZ : wallZ + 1 + i);
+  }
+}
+function liftPhoto(el) {
+  let top = 0;
+  document.querySelectorAll('.photo').forEach(function(p) {
+    top = Math.max(top, parseInt(p.style.zIndex, 10) || 0);
+  });
+  el.style.zIndex = String(top + 1);
+}
 
 function flash() {
   const v = document.getElementById('veil');
@@ -1925,6 +1976,7 @@ function setStage(n, snap) {
     typed = false; typedDone = false; shownIdx = 0;
     if (cake3D) { cake3D.reset(); }
     document.getElementById('wall').innerHTML = '';
+    mobileWall.length = 0;
     document.getElementById('ol').innerHTML = '';
     document.getElementById('ot').textContent = '';
     document.getElementById('oeText').textContent = '';
@@ -2105,32 +2157,44 @@ function showNextPhoto() {
   const i = shownIdx++;
   const ph = CONFIG.photos[i];
   const wide = W > H * 1.35;
+  const narrow = !wide && W <= 520;
   const slots = wide ? WIDE_SLOTS : WALL_SLOTS;
   const slot = slots[i % slots.length];
   const el = document.createElement('div');
   el.className = 'photo';
-  el.style.setProperty('--rot', slot[2] + 'deg');
+  el.style.setProperty('--rot', (narrow ? MOBILE_ROT[i % MOBILE_ROT.length] : slot[2]) + 'deg');
   el.style.left = (slot[0] * W) + 'px';
   el.style.top = (slot[1] * H) + 'px';
-  el.style.zIndex = String(wallZ + i);
+  if (!narrow) el.style.zIndex = String(wallZ + i);
   const img = document.createElement('img');
   img.draggable = false;
   img.onload = function() {
     const ratio = img.naturalHeight / img.naturalWidth;
-    let w = wide
-      ? ratio < .9 ? Math.min(W * .30, 340)          // 横屏里也留够一行配文的宽度
-        : Math.min(W * .22, 330)
-      : ratio < .9 ? Math.min(W * .64, 340)          // 横向截图放大一些，字才看得清、配文也能单行
-        : Math.min(W * .40, 276);
+    let w = narrow
+      ? i === 3 ? Math.min(W * .68, 280)             // 横图守一行配文，靠左垫在自拍下面
+        : Math.min(W * .40, 168)
+      : wide
+        ? ratio < .9 ? Math.min(W * .30, 340)        // 横屏里也留够一行配文的宽度
+          : Math.min(W * .22, 330)
+        : ratio < .9 ? Math.min(W * .64, 340)        // 横向截图放大一些，字才看得清、配文也能单行
+          : Math.min(W * .40, 276);
     let h = w * ratio;
-    const maxH = wide ? H * .46 : H * .385;
-    if (h > maxH) { h = maxH; w = h / ratio; }
-    img.style.width = Math.round(w) + 'px';
-    img.style.height = Math.round(h) + 'px';
-    const totalH = h + 47;
-    const minTop = H * .175 + totalH / 2;
-    const curTop = parseFloat(el.style.top);
-    if (curTop < minTop) el.style.top = Math.round(minTop) + 'px';
+    if (!narrow) {
+      const maxH = wide ? H * .46 : H * .385;
+      if (h > maxH) { h = maxH; w = h / ratio; }
+    }
+    const rw = Math.round(w), rh = Math.round(h);
+    img.style.width = rw + 'px';
+    img.style.height = rh + 'px';
+    if (narrow) {
+      mobileWall[i] = { el: el, rw: rw, rh: rh };
+      layoutMobileWall();
+    } else {
+      const totalH = rh + 47;
+      const minTop = H * .175 + totalH / 2;
+      const curTop = parseFloat(el.style.top);
+      if (curTop < minTop) el.style.top = Math.round(minTop) + 'px';
+    }
     requestAnimationFrame(function() {
       requestAnimationFrame(function() { el.classList.add('show'); });
     });
@@ -2146,17 +2210,22 @@ function showNextPhoto() {
     if (e.button !== 0 || e.isPrimary === false) return;
     drag = {
       id: e.pointerId, x: e.clientX, y: e.clientY,
-      left: parseFloat(el.style.left), top: parseFloat(el.style.top), moved: 0
+      left: parseFloat(el.style.left), top: parseFloat(el.style.top),
+      moved: 0, raised: false
     };
     el.setPointerCapture(e.pointerId);
     el.classList.add('dragging');
-    el.style.zIndex = String(++wallZ);
+    if (!narrow) el.style.zIndex = String(++wallZ);
   });
   el.addEventListener('pointermove', function(e) {
     if (!drag || drag.id !== e.pointerId) return;
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     drag.moved = Math.max(drag.moved, Math.hypot(dx, dy));
-    if (drag.moved > 8) photoDragMoved = true;
+    if (drag.moved > 8) {
+      photoDragMoved = true;
+      // 窄屏只轻点不抬层级，免得垫在下面的横图一碰就盖住自拍
+      if (narrow && !drag.raised) { drag.raised = true; liftPhoto(el); }
+    }
     el.style.left = (drag.left + dx) + 'px';
     el.style.top = (drag.top + dy) + 'px';
   });
