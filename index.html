@@ -73,7 +73,12 @@
     transition: opacity .7s;
     animation: hintPulse 3.4s ease-in-out infinite;
   }
-  #hint:not(:empty)::before {
+  #hint > span {
+    display: inline-block;
+    transition: opacity .42s ease, transform .42s cubic-bezier(.16,1,.3,1);
+  }
+  #hint > span.out { opacity: 0; transform: translateY(4px); }
+  #hint.on::before {
     content: ""; display: inline-block; width: 3px; height: 3px;
     border-radius: 50%; background: rgba(216, 183, 120, .72);
     vertical-align: middle; margin-right: 12px; text-indent: 0;
@@ -85,7 +90,7 @@
     position: fixed; inset: 0; z-index: 4; pointer-events: none;
     display: flex; flex-direction: column; align-items: center;
     padding-top: 8.6vh;
-    opacity: 0; transition: opacity .9s ease;
+    opacity: 0; transition: opacity .9s ease, padding-top .9s cubic-bezier(.16,1,.3,1);
     color: var(--ink);
   }
   body[data-stage="5"] #overlay,
@@ -264,7 +269,7 @@
 </div>
 <div id="wall"></div>
 <div id="grain"></div>
-<div id="hint"></div>
+<div id="hint"><span id="hintText"></span></div>
 <script>
 console.warn('Scripts "build/three.js" and "build/three.min.js" are deprecated with r150+, and will be removed with r160. Please use ES Modules or alternatives: https://threejs.org/docs/index.html#manual/en/introduction/Installation'),
 /**
@@ -1047,6 +1052,8 @@ function createBirthdayCake3D() {
   snapshot.width = snapshot.height = SIZE;
   const context = snapshot.getContext('2d');
 
+  let ready = false;
+
   function render(now, force) {
     now = now || performance.now();
     if (!force && !dirty && Math.abs(targetAngle - angle) < .0002) return snapshot;
@@ -1065,14 +1072,44 @@ function createBirthdayCake3D() {
     context.drawImage(renderer.domElement, 0, 0);
     lastRender = now;
     dirty = false;
+    ready = true;
     return snapshot;
   }
-  render(0, true);
+
+  /* 首帧渲染（147 个 mesh 的着色器编译就在这一步，天生是同步的重活）。
+     建造时不再立刻渲染，改由页面在开场星空那一秒里调 warm()：
+     先用 compileAsync 让驱动并行编译（不占主线程），再做首帧，
+     这样日期粒子成型时不会再被冻住。 */
+  function renderNow() { return render(performance.now(), true); }
+
+  function warm(done) {
+    let settled = false;
+    const finish = function () {
+      if (settled) return;
+      settled = true;
+      try { render(performance.now(), true); } catch (err) { }
+      ready = true;
+      if (done) done();
+    };
+    if (typeof renderer.compileAsync === 'function') {
+      try {
+        const p = renderer.compileAsync(scene, camera);
+        if (p && typeof p.then === 'function') p.then(finish, finish);
+        else finish();
+      } catch (err) { finish(); }
+      setTimeout(finish, 4000);   // 兜底：别让首帧无限期缺位
+    } else {
+      setTimeout(finish, 0);
+    }
+  }
 
   return {
     canvas: snapshot,
     size: SIZE,
     render,
+    renderNow,
+    warm,
+    get ready() { return ready; },
     rotate(dx, dy) {
       targetAngle += dx * .009;
       targetTilt = T.MathUtils.clamp(targetTilt + dy * .007, -.72, 1.05);
@@ -1132,7 +1169,28 @@ const CONFIG = {
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const hintEl = document.getElementById('hint');
+const hintTextEl = document.getElementById('hintText');
 let W = 0, H = 0, DPR = 1;
+
+/* 提示文字切换：淡出 → 换字 → 淡入，避免跨幕时“啪”地跳变 */
+let hintSwap = 0;
+function setHint(text, instant) {
+  text = text || '';
+  if (hintTextEl.textContent === text) { hintEl.classList.toggle('on', !!text); return; }
+  clearTimeout(hintSwap);
+  if (instant) {
+    hintTextEl.classList.remove('out');
+    hintTextEl.textContent = text;
+    hintEl.classList.toggle('on', !!text);
+    return;
+  }
+  hintTextEl.classList.add('out');
+  hintSwap = setTimeout(function() {
+    hintTextEl.textContent = text;
+    hintEl.classList.toggle('on', !!text);
+    hintTextEl.classList.remove('out');
+  }, 300);
+}
 
 function resize() {
   DPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -1401,14 +1459,13 @@ function dateFlow() {
   }
   dateAt = performance.now();
   partDim = 0;
-  hintEl.textContent = '';
+  setHint('');
   clearTimeout(dateTimer);
   dateTimer = setTimeout(function() {
     if (stage !== 1) return;
     parts.forEach(function(p) { if (p.mode === 'seek') p.t0 = 0; });
-    hintEl.textContent = HINTS[1];
+    setHint(HINTS[1]);
   }, 2600);
-  setTimeout(function() { ensureCake3D(); }, 900);
 }
 
 /* ================= 蛋糕造型 / 摆放 ================= */
@@ -1579,7 +1636,11 @@ function renderFallbackCake() {
 }
 
 function renderCakeCanvas() {
-  if (ensureCake3D()) return cake3D.canvas;
+  const c3 = ensureCake3D();
+  if (c3) {
+    if (!c3.ready) c3.renderNow();   // 预热没跑完就被用到，就地补一帧
+    return c3.canvas;
+  }
   if (!cakeCanvas) cakeCanvas = renderFallbackCake();
   return cakeCanvas;
 }
@@ -1621,6 +1682,7 @@ function cakeStage(level) {
 
 /* ================= 火苗 / 烟 / 微尘 ================= */
 let flameAlive = false, smokeOn = false;
+let flameFade = 0;              // 火苗亮度包络：0 灭 / 1 亮，让点火与吹灭都是渐变
 let lastEmber = 0;
 
 function flameAnchors() {
@@ -1701,7 +1763,8 @@ function updateMotes(t) {
 }
 
 function drawFlames(t, hold) {
-  if (!flameAlive && hold <= 0) return;
+  if (flameFade <= .004 && hold <= 0) return;
+  const k = Math.max(0, Math.min(1, flameFade));
   const anchors = flameAnchors();
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
@@ -1713,15 +1776,15 @@ function drawFlames(t, hold) {
     const lean = Math.sin(t * .003 + idx) * base * .12;
     // 光晕
     const glowR = base * (2.15 - hold * .9);
-    ctx.globalAlpha = (flameAlive ? .34 : .13) * (1 - hold * .45);
+    ctx.globalAlpha = (flameAlive ? .34 : .13) * (1 - hold * .45) * k;
     ctx.drawImage(goldGlow, a.x - glowR, a.y - glowR - fh * .25, glowR * 2, glowR * 2);
     ctx.globalAlpha = 1;
     // 火苗
     const gr = ctx.createLinearGradient(a.x, a.y - fh, a.x, a.y);
     gr.addColorStop(0, 'rgba(255,120,40,0)');
-    gr.addColorStop(.35, 'rgba(255,166,72,' + (.72 - hold * .3) + ')');
-    gr.addColorStop(.78, 'rgba(255,224,158,' + (.9 - hold * .35) + ')');
-    gr.addColorStop(1, 'rgba(255,249,231,' + (.95 - hold * .4) + ')');
+    gr.addColorStop(.35, 'rgba(255,166,72,' + ((.72 - hold * .3) * k) + ')');
+    gr.addColorStop(.78, 'rgba(255,224,158,' + ((.9 - hold * .35) * k) + ')');
+    gr.addColorStop(1, 'rgba(255,249,231,' + ((.95 - hold * .4) * k) + ')');
     ctx.fillStyle = gr;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
@@ -1729,7 +1792,7 @@ function drawFlames(t, hold) {
     ctx.bezierCurveTo(a.x + fw * .85 + lean, a.y - fh * .68, a.x + fw * 1.02, a.y - fh * .26, a.x, a.y);
     ctx.fill();
     // 内芯
-    ctx.fillStyle = 'rgba(255,252,240,' + (.8 - hold * .3) + ')';
+    ctx.fillStyle = 'rgba(255,252,240,' + ((.8 - hold * .3) * k) + ')';
     ctx.beginPath();
     ctx.moveTo(a.x, a.y - fh * .05);
     ctx.quadraticCurveTo(a.x - fw * .42, a.y - fh * .34, a.x + lean * .5, a.y - fh * .58);
@@ -1737,7 +1800,7 @@ function drawFlames(t, hold) {
     ctx.fill();
     // 烛芯
     ctx.globalCompositeOperation = 'source-over';
-    ctx.strokeStyle = 'rgba(48,35,28,.9)';
+    ctx.strokeStyle = 'rgba(48,35,28,' + (.9 * k) + ')';
     ctx.lineWidth = 1.4;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y + 1);
@@ -1831,9 +1894,9 @@ function setStage(n, snap) {
   stage = n;
   document.body.dataset.stage = String(n);
   lockUntil = performance.now() + 420;
-  hintEl.textContent = HINTS[n] || '';
+  setHint(HINTS[n] || '');
   if (n === 0) {
-    blown = false; flameAlive = false; smokeOn = false;
+    blown = false; flameAlive = false; smokeOn = false; flameFade = 0;
     cakeAlpha = 0; cakeLight = 1; cakeScale = 1; partDim = 0;
     typed = false; typedDone = false; shownIdx = 0;
     if (cake3D) { cake3D.reset(); }
@@ -1865,7 +1928,7 @@ function setStage(n, snap) {
     ensureCake3D(); renderCakeCanvas();
     smokeOn = false;
     stage5T = performance.now();
-    cakeAlpha = 1; cakeLight = 1; cakeScale = 1;
+    cakeAlpha = 1; cakeScale = 1;   // 亮度不硬切，交给逐帧追值从吹灭后的暗部自然升回来
     setTimeout(function() {
       if (stage !== 5) return;
       flash();
@@ -1938,8 +2001,8 @@ function finishReveal() {
   typedDone = true;
   document.getElementById('os').textContent = CONFIG.sign || '';
   if (CONFIG.sign) document.getElementById('os').classList.add('in');
-  if (CONFIG.photos.length) hintEl.textContent = '拖动蛋糕 · 轻点看照片';
-  else hintEl.textContent = cake3DFailed ? '' : '拖动蛋糕，换个角度';
+  if (CONFIG.photos.length) setHint('拖动蛋糕 · 轻点看照片');
+  else setHint(cake3DFailed ? '' : '拖动蛋糕，换个角度');
 }
 
 function startReveal() {
@@ -1997,7 +2060,7 @@ function showAllText() {
 
 /* ================= 第 6 幕：照片墙 ================= */
 function enterWall() {
-  hintEl.textContent = HINTS[6];
+  setHint(HINTS[6]);
   typedDone = true;
   const c0 = cakeLight, s0 = cakeScale;
   const t0 = performance.now();
@@ -2080,7 +2143,7 @@ function showNextPhoto() {
   el.appendChild(cap);
   document.getElementById('wall').appendChild(el);
   if (shownIdx >= CONFIG.photos.length) {
-    hintEl.textContent = '';
+    setHint('');
   }
 }
 
@@ -2095,7 +2158,7 @@ function clearPress() {
   pressTimer = null;
   pointer.down = false;
   pressAt = 0;
-  if (stage === 3 && !blown) hintEl.textContent = HINTS[3];
+  if (stage === 3 && !blown) setHint(HINTS[3]);
 }
 function cancelPress() {
   clearPress();
@@ -2113,7 +2176,7 @@ window.addEventListener('pointerdown', function(e) {
   if (stage === 3 && !blown) {
     pressTimer = setTimeout(function() { blowOut(); }, 540);
     pressAt = performance.now();
-    hintEl.textContent = '继续按住，别松';
+    setHint('继续按住，别松', true);
   }
 });
 
@@ -2160,6 +2223,7 @@ function blowOut() {
 function update(t) {
   updateStars(t);
   updateMotes(t);
+  flameFade += ((flameAlive ? 1 : 0) - flameFade) * .2;
   if (stage === 1) partDim = Math.max(0, Math.min(1, (t - dateAt) / 520));
 
   for (const p of parts) {
@@ -2352,6 +2416,15 @@ ensureParts(900);
 setStage(0);
 loop();
 
+/* 3D 蛋糕预热：趁开场星空这一两秒先把模型建好，
+   并用 compileAsync 交给驱动并行编译着色器（不占主线程），
+   日期粒子成型、点蜡烛、吹蜡烛时才不会再被这一次冻结卡住。 */
+function warmUpCake() {
+  const c3 = ensureCake3D();
+  if (c3 && !c3.ready) c3.warm();
+}
+setTimeout(warmUpCake, 240);
+
 document.fonts.load('500 64px "Noto Serif SC"').then(function() {
   fontsReady = true;
 }).catch(function() { fontsReady = true; });
@@ -2371,7 +2444,7 @@ function applyDebug() {
   if (n >= 6) {
     while (shownIdx < CONFIG.photos.length) showNextPhoto();
   }
-  hintEl.textContent = n >= 6 ? '' : (HINTS[n] || '');
+  setHint(n >= 6 ? '' : (HINTS[n] || ''), true);
 }
 document.fonts.ready.then(function() {
   fontsReady = true;
