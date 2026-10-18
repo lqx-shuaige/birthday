@@ -1370,13 +1370,13 @@ function assign(pts, opts) {
 }
 
 /* ================= 文字采样 ================= */
-function fontString(px) {
-  return '500 ' + px + 'px "Noto Serif SC", Georgia, "Times New Roman", serif';
+function fontString(px, weight) {
+  return (weight || 500) + ' ' + px + 'px "Noto Serif SC", Georgia, "Times New Roman", serif';
 }
-function fitSpaced(g, text, maxW, startPx, spacingRatio) {
+function fitSpaced(g, text, maxW, startPx, spacingRatio, weight) {
   let px = startPx;
   do {
-    g.font = fontString(px);
+    g.font = fontString(px, weight);
     const sp = px * (spacingRatio || 0);
     const w = g.measureText(text).width + sp * Math.max(0, text.length - 1);
     if (w <= maxW) return px;
@@ -1384,10 +1384,10 @@ function fitSpaced(g, text, maxW, startPx, spacingRatio) {
   } while (px > 10);
   return px;
 }
-function drawSpaced(g, text, cx, y, px, spacingRatio) {
+function drawSpaced(g, text, cx, y, px, spacingRatio, weight) {
   const chars = Array.from(text);
   const sp = px * (spacingRatio || 0);
-  g.font = fontString(px);
+  g.font = fontString(px, weight);
   let total = 0;
   for (const ch of chars) total += g.measureText(ch).width;
   total += sp * Math.max(0, chars.length - 1);
@@ -1401,19 +1401,21 @@ function drawSpaced(g, text, cx, y, px, spacingRatio) {
 }
 function sampleText(lines, opts) {
   opts = opts || {};
+  const res = opts.res || .5;   // .5 = 半分辨率画布；1 = 逐像素采样（日期用，粒子约 4 倍，字形更干净）
   const oc = document.createElement('canvas');
-  const sw = Math.round(W * .5), sh = Math.round(H * .5);
+  const sw = Math.round(W * res), sh = Math.round(H * res);
   oc.width = sw; oc.height = sh;
   const g = oc.getContext('2d');
   const maxW = sw * .92;
   const startPx = Math.min(sh * (opts.big ? .43 : .17), sw * .20);
   const spacing = opts.spacing || 0;
+  const weight = opts.weight;
   let px = startPx;
   if (opts.spacing) {
-    px = fitSpaced(g, lines[0], maxW, startPx, spacing);
+    px = fitSpaced(g, lines[0], maxW, startPx, spacing, weight);
   } else {
     const longest = lines.slice().sort(function(a, b) { return b.length - a.length; })[0];
-    px = fitSpaced(g, longest, maxW, startPx, 0);
+    px = fitSpaced(g, longest, maxW, startPx, 0, weight);
   }
   const lh = px * 1.5;
   const totalH = lh * lines.length;
@@ -1422,21 +1424,21 @@ function sampleText(lines, opts) {
   g.fillStyle = '#fff';
   lines.forEach(function(text, i) {
     if (opts.spacing) {
-      drawSpaced(g, text, sw / 2, y0 + i * lh, px, opts.spacing);
+      drawSpaced(g, text, sw / 2, y0 + i * lh, px, opts.spacing, weight);
     } else {
       g.textAlign = 'center';
-      g.font = fontString(px);
+      g.font = fontString(px, weight);
       g.fillText(text, sw / 2, y0 + i * lh);
     }
   });
-  return { pts: sampleCanvas(oc, opts.gap || 2), scale: 2 };
+  return { pts: sampleCanvas(oc, opts.gap || 2), scale: 1 / res };
 }
 
 /* ================= 第 1 幕：日期 ================= */
 let dateTimer = null;
 let dateAt = 0;
 function dateFlow() {
-  const sampled = sampleText([CONFIG.birthday], { big: true, spacing: .10, gap: 1 });
+  const sampled = sampleText([CONFIG.birthday], { big: true, spacing: .10, gap: 1, res: 1, weight: 350 });
   const pts = sampled.pts;
   const n = Math.min(3400, Math.max(2100, Math.round(pts.length * 1.45)));
   assign(pts, {
@@ -1451,8 +1453,8 @@ function dateFlow() {
     if (i % 17 === 0) { p.tr = 216; p.tg = 183; p.tb = 120; }
     else if (i % 23 === 0) { p.tr = 230; p.tg = 186; p.tb = 176; }
     else if (i % 31 === 0) { p.tr = 255; p.tg = 247; p.tb = 233; }
-    p.tsize = i % 7 === 0 ? 2.25 + Math.random() * .75 : 1.0 + Math.random() * .85;
-    p.glow = i % 5 === 0;
+    p.tsize = i % 9 === 0 ? 1.45 + Math.random() * .4 : .7 + Math.random() * .4;
+    p.glow = i % 12 === 0;
     p.t0 = performance.now() + 220 + (p.tx / W) * 520 + Math.random() * 280;
     p.vx = (Math.random() - .5) * 1.2;
     p.vy = (Math.random() - .5) * 1.2;
