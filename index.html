@@ -105,7 +105,7 @@
     position: fixed; inset: 0; z-index: 4; pointer-events: none;
     display: flex; flex-direction: column; align-items: center;
     padding-top: 8.6vh;
-    opacity: 0; transition: opacity .9s ease, padding-top .9s cubic-bezier(.16,1,.3,1);
+    opacity: 0; transition: padding-top .9s cubic-bezier(.16,1,.3,1);
     color: var(--ink);
   }
   body[data-stage="5"] #overlay,
@@ -133,7 +133,7 @@
     color: #f6efe3;
     text-shadow: 0 3px 34px rgba(0, 0, 0, .72), 0 0 60px rgba(255, 222, 170, .06);
     overflow: hidden;
-    transition: font-size .9s cubic-bezier(.16,1,.3,1), letter-spacing .9s cubic-bezier(.16,1,.3,1), opacity .7s;
+    transition: font-size .9s cubic-bezier(.16,1,.3,1), letter-spacing .9s cubic-bezier(.16,1,.3,1), text-indent .9s cubic-bezier(.16,1,.3,1), color .9s ease, opacity .7s;
   }
   .title span {
     display: inline-block;
@@ -161,7 +161,7 @@
     font-size: clamp(13px, 3.35vw, 15.5px); font-weight: 300;
     line-height: 2.18; letter-spacing: .14em; text-indent: .14em;
     color: rgba(244, 236, 223, .68);
-    transition: opacity .7s ease, transform .9s cubic-bezier(.16,1,.3,1);
+    transition: opacity .7s ease, transform .9s cubic-bezier(.16,1,.3,1), filter .55s ease;
   }
   .lines .line {
     opacity: 0; transform: translateY(12px); filter: blur(5px);
@@ -204,12 +204,12 @@
       0 6px 16px rgba(0, 0, 0, .30),
       inset 0 1px 0 rgba(255, 255, 255, .7);
     opacity: 0;
-    transform: translate(-50%, -50%) translateY(18px) scale(.87) rotate(calc(var(--rot) - 4deg));
-    filter: blur(7px);
+    transform: translate(-50%, -50%) translateY(12px) scale(.92) rotate(calc(var(--rot) - 2.5deg));
+    filter: blur(4.5px);
     transition:
-      opacity .85s ease,
-      transform 1.05s cubic-bezier(.16, 1, .3, 1),
-      filter .8s ease,
+      opacity .7s ease,
+      transform .95s cubic-bezier(.2, .85, .3, 1),
+      filter .6s ease,
       box-shadow .35s ease;
     pointer-events: auto; touch-action: none; cursor: grab;
     will-change: transform, opacity;
@@ -1070,7 +1070,7 @@ function createBirthdayCake3D() {
 
   /* ---------- 相机、渲染与接口 ---------- */
   let targetAngle = -.16, angle = -.16, targetTilt = 0;
-  let dirty = true, lastRender = 0, flameOn = false;
+  let dirty = true, lastRender = 0, flameOn = false, flameLevel = 0;
   const snapshot = document.createElement('canvas');
   snapshot.width = snapshot.height = SIZE;
   const context = snapshot.getContext('2d');
@@ -1079,16 +1079,26 @@ function createBirthdayCake3D() {
 
   function render(now, force) {
     now = now || performance.now();
-    if (!force && !dirty && Math.abs(targetAngle - angle) < .0002) return snapshot;
     if (!force && now - lastRender < 1000 / 30) return snapshot;
+    // 火光强度走包络：点火是渐亮，吹灭是渐暗，不再一帧切到 0
+    const flameTarget = flameOn ? 1 : 0;
+    if (flameLevel !== flameTarget) {
+      flameLevel += (flameTarget - flameLevel) * .2;
+      if (Math.abs(flameTarget - flameLevel) < .01) flameLevel = flameTarget;
+      dirty = true;
+    }
+    if (!force && !dirty && Math.abs(targetAngle - angle) < .0002) return snapshot;
     angle += (targetAngle - angle) * .24;
     cake.rotation.y = angle;
     camera.position.y = CAM_BASE_Y + targetTilt * 1.15;
     camera.lookAt(0, CAM_TARGET_Y, 0);
-    if (flameOn) {
+    if (flameLevel > .004) {
       const flicker = .52 + Math.sin(now * .011) * .06 + Math.sin(now * .027) * .03;
-      flameLights[0].intensity = flicker;
-      flameLights[1].intensity = .54 + Math.sin(now * .013 + 1.6) * .06;
+      flameLights[0].intensity = flicker * flameLevel;
+      flameLights[1].intensity = (.54 + Math.sin(now * .013 + 1.6) * .06) * flameLevel;
+    } else {
+      flameLights[0].intensity = 0;
+      flameLights[1].intensity = 0;
     }
     renderer.render(scene, camera);
     context.clearRect(0, 0, SIZE, SIZE);
@@ -1140,13 +1150,13 @@ function createBirthdayCake3D() {
     },
     setFlames(on) {
       flameOn = !!on;
-      for (const l of flameLights) l.intensity = on ? .55 : 0;
       dirty = true;
     },
     reset() {
       targetAngle = angle = -.16;
       targetTilt = 0;
       flameOn = false;
+      flameLevel = 0;
       for (const l of flameLights) l.intensity = 0;
       dirty = true;
       render(performance.now(), true);
@@ -1506,6 +1516,7 @@ let cakeCanvas = null;       // 仅在无 WebGL 时使用
 let cakeAlpha = 0;
 let cakeLight = 1;
 let cakeScale = 1;
+let glowLevel = 1;
 let formT = 0, formFlags = {};
 let stage5T = 0;
 
@@ -1703,8 +1714,8 @@ function cakeStage(level) {
     const res = snap.width / CAKE.S;
     assign(sampleEdges(snap, Math.max(4, Math.round(6 * res / (snap.width / 960)))), {
       scale: pl.k / res, ox: pl.ox, oy: pl.oy,
-      size: 1.4, r: 242, g: 233, b: 220, jitter: 1.1,
-      maxParts: 2600, wave: 'lr', waveDur: 1150
+      size: 1.4, r: 242, g: 233, b: 220, jitter: .7,
+      maxParts: 2600, wave: 'tb', waveDur: 1200
     });
     return;
   }
@@ -1966,6 +1977,9 @@ function flash() {
 
 function setStage(n, snap) {
   clearPress();
+  // 宽屏进照片墙时，标题区要从左栏换到顶部居中；布局是瞬切的，
+  // 先记下旧位置，切完补一段横向滑动（窄屏本来就居中，位移为 0 自动跳过）
+  const wallFlip = (n === 6 && !snap) ? captureWallFlip() : null;
   stage = n;
   document.body.dataset.stage = String(n);
   lockUntil = performance.now() + 420;
@@ -1997,7 +2011,8 @@ function setStage(n, snap) {
     flameAlive = false;
     if (cake3D) cake3D.setFlames(false);
     smokeOn = true;
-    spawnSmoke(true);
+    // 先让火苗收下去，烟再起来，吹灭不是“火一帧变烟”
+    setTimeout(function() { if (stage === 4) spawnSmoke(true); }, 90);
     setTimeout(function() { smokeOn = false; }, 4000);
     setTimeout(function() { if (stage === 4) setStage(5); }, 2900);
   } else if (n === 5) {
@@ -2012,8 +2027,34 @@ function setStage(n, snap) {
     }, snap ? 0 : 260);
   } else if (n === 6) {
     enterWall();
+    if (wallFlip) playWallFlip(wallFlip);
   }
   if (snap) snapParticles();
+}
+
+// 进照片墙前记录标题区各块的位置（宽屏专属）
+function captureWallFlip() {
+  if (!matchMedia('(min-aspect-ratio: 3/2)').matches) return null;
+  const out = [];
+  ['.eyebrow', '.title', '.orn', '.lines', '.sign'].forEach(function(sel) {
+    const el = document.querySelector(sel);
+    if (el) out.push({ el: el, x: el.getBoundingClientRect().left });
+  });
+  return out;
+}
+
+// 用相对定位补横向位移：不碰各块自己的 transform / 过渡
+function playWallFlip(items) {
+  items.forEach(function(it) {
+    const dx = it.x - it.el.getBoundingClientRect().left;
+    if (Math.abs(dx) < 1) return;
+    it.el.style.position = 'relative';
+    const anim = it.el.animate(
+      [{ left: dx + 'px' }, { left: '0px' }],
+      { duration: 900, easing: 'cubic-bezier(.16,1,.3,1)' }
+    );
+    anim.onfinish = function() { it.el.style.position = ''; };
+  });
 }
 
 function snapParticles() {
@@ -2053,11 +2094,14 @@ function enterForm(snap) {
 function formUpdate() {
   if (stage !== 2) return;
   formT += 16.7 * (pointer.down ? 2.25 : 1);
-  const reveal = smooth((formT - 1850) / 1200);
-  if (formT > 1850) {
+  const reveal = smooth((formT - 2050) / 950);
+  if (formT > 2050) {
     cakeAlpha = reveal;
-    partDim = Math.max(0, 1 - smooth((formT - 1850) / 1000));
+    partDim = Math.max(0, 1 - smooth((formT - 2050) / 950));
     cakeScale = .955 + .045 * easeOut(reveal);
+  } else {
+    // 散开的中段略微收暗，让粒子飞行不那么抢眼；轮廓成形时再亮回来
+    partDim = 1 - .22 * Math.sin(Math.PI * Math.min(1, formT / 1500));
   }
   if (!formFlags.lit && formT > 3000) {
     formFlags.lit = 1;
@@ -2149,7 +2193,7 @@ function enterWall() {
   })();
   setTimeout(function() {
     if (stage === 6 && shownIdx === 0) showNextPhoto();
-  }, 520);
+  }, 600);
 }
 
 function showNextPhoto() {
@@ -2392,6 +2436,9 @@ function update(t) {
   if (stage !== 2) cakeLight += (lightTarget - cakeLight) * .035;
   let scaleTarget = stage === 6 ? .94 : 1;
   if (stage !== 2) cakeScale += (scaleTarget - cakeScale) * .04;
+  // 蛋糕背后的暖光也跟着追值，吹灭 / 进照片墙 / 回许愿页都不再一帧换亮度
+  const glowTarget = stage === 4 ? .48 : stage === 6 ? .3 : 1;
+  glowLevel += (glowTarget - glowLevel) * .045;
 }
 
 /* ================= 绘制 ================= */
@@ -2400,7 +2447,7 @@ function drawBackGlow() {
   const pl = cakePlacement();
   const cx = pl.ox + pl.size / 2;
   const cy = pl.oy + pl.size / 2;
-  const strength = (stage === 4 ? .48 : stage === 6 ? .3 : 1) * (flameAlive ? 1 : .6);
+  const strength = glowLevel * (.6 + .4 * flameFade);
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
   let gr = ctx.createRadialGradient(cx, cy + pl.size * .12, pl.size * .04, cx, cy + pl.size * .12, pl.size * .48);
