@@ -20,6 +20,7 @@
     --faint: rgba(244, 236, 223, .36);
     --gold: #d8b778;
     --gold-soft: rgba(216, 183, 120, .55);
+    --ease-soft: cubic-bezier(.33,.55,.25,1);   /* 起步不抢、收尾不拖，场景位移统一用它 */
     --serif: "Noto Serif SC", "Songti SC", Georgia, "Times New Roman", serif;
     --sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   }
@@ -90,7 +91,7 @@
   body[data-stage="5"] #hint { color: rgba(247, 238, 224, .56); }
   #hint > span {
     display: inline-block;
-    transition: opacity .42s ease, transform .42s cubic-bezier(.16,1,.3,1);
+    transition: opacity .42s ease, transform .42s var(--ease-soft);
   }
   #hint > span.out { opacity: 0; transform: translateY(4px); }
   #hint.on::before {
@@ -105,7 +106,7 @@
     position: fixed; inset: 0; z-index: 4; pointer-events: none;
     display: flex; flex-direction: column; align-items: center;
     padding-top: 8.6vh;
-    opacity: 0; transition: padding-top .9s cubic-bezier(.16,1,.3,1);
+    opacity: 0; transition: padding-top .9s var(--ease-soft);
     color: var(--ink);
   }
   body[data-stage="5"] #overlay,
@@ -116,7 +117,7 @@
     font-family: var(--serif); font-size: 10px; font-weight: 400;
     letter-spacing: .44em; text-indent: .44em; color: rgba(216, 183, 120, .86);
     opacity: 0; transform: translateY(7px);
-    transition: opacity 1s ease .15s, transform 1s cubic-bezier(.16,1,.3,1) .15s;
+    transition: opacity 1s ease .15s, transform 1s var(--ease-soft) .15s;
   }
   .eyebrow.in { opacity: 1; transform: none; }
   .eyebrow i {
@@ -133,12 +134,12 @@
     color: #f6efe3;
     text-shadow: 0 3px 34px rgba(0, 0, 0, .72), 0 0 60px rgba(255, 222, 170, .06);
     overflow: hidden;
-    transition: font-size .9s cubic-bezier(.16,1,.3,1), letter-spacing .9s cubic-bezier(.16,1,.3,1), text-indent .9s cubic-bezier(.16,1,.3,1), color .9s ease, opacity .7s;
+    transition: font-size .9s var(--ease-soft), letter-spacing .9s var(--ease-soft), text-indent .9s var(--ease-soft), color .9s ease, opacity .7s;
   }
   .title span {
     display: inline-block;
     transform: translateY(118%); opacity: 0;
-    transition: transform 1.2s cubic-bezier(.16,1,.3,1) .06s, opacity .9s ease .06s;
+    transition: transform 1.2s var(--ease-soft) .06s, opacity .9s ease .06s;
   }
   .title span.in { transform: none; opacity: 1; }
 
@@ -146,7 +147,7 @@
     display: flex; align-items: center; gap: 12px; margin-top: 15px;
     color: rgba(216, 183, 120, .8); font-size: 9px;
     opacity: 0; transform: translateY(6px) scale(.9);
-    transition: opacity 1s ease, transform 1s cubic-bezier(.16,1,.3,1);
+    transition: opacity 1s ease, transform 1s var(--ease-soft);
   }
   .orn.in { opacity: .9; transform: none; }
   .orn i {
@@ -161,11 +162,11 @@
     font-size: clamp(13px, 3.35vw, 15.5px); font-weight: 300;
     line-height: 2.18; letter-spacing: .14em; text-indent: .14em;
     color: rgba(244, 236, 223, .68);
-    transition: opacity .7s ease, transform .9s cubic-bezier(.16,1,.3,1), filter .55s ease;
+    transition: opacity .7s ease, transform .9s var(--ease-soft), filter .55s ease;
   }
   .lines .line {
     opacity: 0; transform: translateY(12px); filter: blur(5px);
-    transition: opacity 1s ease, transform 1.05s cubic-bezier(.16,1,.3,1), filter 1s ease;
+    transition: opacity 1s ease, transform 1.05s var(--ease-soft), filter 1s ease;
   }
   .lines .line.in { opacity: 1; transform: none; filter: none; }
   .lines .line:first-child {
@@ -2045,13 +2046,15 @@ function captureWallFlip() {
 
 // 用相对定位补横向位移：不碰各块自己的 transform / 过渡
 function playWallFlip(items) {
+  const ease = getComputedStyle(document.documentElement).getPropertyValue('--ease-soft').trim() ||
+    'cubic-bezier(.33,.55,.25,1)';
   items.forEach(function(it) {
     const dx = it.x - it.el.getBoundingClientRect().left;
     if (Math.abs(dx) < 1) return;
     it.el.style.position = 'relative';
     const anim = it.el.animate(
       [{ left: dx + 'px' }, { left: '0px' }],
-      { duration: 900, easing: 'cubic-bezier(.16,1,.3,1)' }
+      { duration: 900, easing: ease }
     );
     anim.onfinish = function() { it.el.style.position = ''; };
   });
